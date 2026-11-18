@@ -493,3 +493,81 @@ def test_policy_command_fills_in_account_and_region(
     assert "<ACCOUNT_ID>" not in out and "<REGION>" not in out
     assert "arn:aws:iam::1:role/vllm-primer-ssm" in out and "eu-central-1" in out
     json.loads(out)
+
+
+def client_error(code: str, message: str = "boom") -> Exception:
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": message}}, "RunInstances")
+
+
+def failing_run(code: str) -> Callable[..., Any]:
+    def run(**kwargs: Any) -> Any:
+        raise client_error(code)
+
+    return run
+
+
+def test_spot_plan_states_the_real_ceiling_not_just_todays_price(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan = aws_gpu.Plan(
+        "eu-central-1",
+        "arn",
+        "g4dn.xlarge",
+        4,
+        "1x T4",
+        4,
+        0.30,
+        "ami",
+        [],
+        on_demand_usd=0.658,
+    )
+    aws_gpu.print_plan(plan, Config(use_spot=True))
+    out = capsys.readouterr().out
+    assert "about $1.20 at today's Spot price" in out
+    assert "never more than $2.63" in out  # 4 h at the On-Demand rate
+    assert "Max spend" not in out
+
+
+def test_on_demand_plan_keeps_the_max_spend_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan = aws_gpu.Plan(
+        "eu-central-1", "arn", "g4dn.xlarge", 4, "1x T4", 4, 0.658, "ami", []
+    )
+    aws_gpu.print_plan(plan, Config())
+    assert "Max spend: $2.63" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "code,kind",
+    [("MaxSpotInstanceCountExceeded", "Spot"), ("VcpuLimitExceeded", "On-Demand")],
+)
+def test_quota_errors_explain_propagation_and_stop_at_once(
+    code: str, kind: str
+) -> None:
+    aws = make_fake_aws()
+    aws.ec2.responses["describe_subnets"] = {
+        "Subnets": [{"SubnetId": "a"}, {"SubnetId": "b"}]
+    }
+    aws.ec2.responses["run_instances"] = failing_run(code)
+    with pytest.raises(ToolError, match=rf"{kind} vCPU quota.*30 minutes"):
+        aws_gpu.launch(aws, Config(use_spot=kind == "Spot"), "prof", "sg-1", "ami-1")
+    assert (
+        len(aws.ec2.called("run_instances")) == 1
+    )  # another zone would fail the same way
+
+
+def test_no_capacity_tries_every_zone_then_suggests_on_demand_for_spot() -> None:
+    aws = make_fake_aws()
+    aws.ec2.responses["describe_subnets"] = {
+        "Subnets": [{"SubnetId": "a"}, {"SubnetId": "b"}]
+    }
+    aws.ec2.responses["run_instances"] = failing_run("InsufficientInstanceCapacity")
+    with pytest.raises(ToolError, match=r"VLLM_USE_SPOT=0"):
+        aws_gpu.launch(aws, Config(use_spot=True), "prof", "sg-1", "ami-1")
+    assert [c["SubnetId"] for c in aws.ec2.called("run_instances")] == ["a", "b"]
+    with pytest.raises(ToolError) as err:
+        aws_gpu.launch(aws, Config(use_spot=False), "prof", "sg-1", "ami-1")
+    assert "VLLM_USE_SPOT" not in str(err.value)

@@ -164,6 +164,19 @@ def build_user_data(cfg: Config, region: str) -> str:
     )
 
 
+QUOTA_ERRORS = ("MaxSpotInstanceCountExceeded", "VcpuLimitExceeded")
+
+
+def quota_message(code: str, cfg: Config, region: str) -> str:
+    kind = "Spot" if code == "MaxSpotInstanceCountExceeded" else "On-Demand"
+    return (
+        f"AWS refused the launch: the {kind} vCPU quota for {cfg.instance_type} in "
+        f"{region} is too low. If you were just approved for an increase, it can "
+        "take up to 30 minutes to apply: check `make live-plan` and retry. "
+        "Otherwise request one in Service Quotas."
+    )
+
+
 def quota_codes(instance_type: str) -> tuple[str, str] | None:
     family = instance_type.split(".")[0]
     letters = "".join(c for c in family if c.isalpha())
@@ -325,7 +338,19 @@ def print_plan(plan: Plan, cfg: Config) -> None:
             if cost
             else "Pricing:   On-Demand, price unknown"
         )
-    print(f"Max spend: {cap} (auto-terminates after {cfg.auto_terminate_hours:g} h)")
+    hours = f"auto-terminates after {cfg.auto_terminate_hours:g} h"
+    if cfg.use_spot:
+        # Without a max price AWS caps Spot at the On-Demand rate, so the real
+        # ceiling is the On-Demand cost, not today's (lower, moving) Spot price.
+        ceiling = plan.on_demand_usd
+        top = (
+            f"; never more than ${ceiling * cfg.auto_terminate_hours:.2f}"
+            if ceiling
+            else ""
+        )
+        print(f"Spend:     about {cap} at today's Spot price{top} ({hours})")
+    else:
+        print(f"Max spend: {cap} ({hours})")
     quota = "unknown" if plan.quota is None else f"{plan.quota:g} vCPU"
     print(f"Quota:     {quota}")
     print("Creates:   security group (no inbound rules), IAM role + instance profile")
@@ -490,10 +515,15 @@ def launch(aws: Aws, cfg: Config, profile: str, sg_id: str, ami: str) -> str:
                 if code == "InvalidParameterValue" and "Instance Profile" in message:
                     time.sleep(5)
                     continue
+                if code in QUOTA_ERRORS:
+                    raise ToolError(quota_message(code, cfg, aws.region))
                 if code in ("InsufficientInstanceCapacity", "Unsupported"):
                     break
                 raise
-    raise ToolError(f"Could not launch in any zone: {last}")
+    hint = (
+        " Try again later, or use On-Demand (VLLM_USE_SPOT=0)." if cfg.use_spot else ""
+    )
+    raise ToolError(f"Could not launch in any zone: {last}.{hint}")
 
 
 def cmd_up(
