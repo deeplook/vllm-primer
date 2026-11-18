@@ -168,6 +168,12 @@ The mock proves the lessons' client code, not vLLM's behaviour. Generated text
 varies, so lessons assert structure (valid JSON, matching schema, repeatable
 seeds, rising counters), never wording. For the real thing use `make live-run`.
 
+CI never launches anything on AWS. A real run needs AWS credentials in the
+repository's secrets and starts a GPU instance that costs about $0.66/hour, and CI
+must stay free of secrets, paid services and cloud resources (see `primer-standards`).
+It also means a pull request from a fork cannot spend your money. The real-GPU run is
+a manual step: `make live-up YES=1`, then `make live-run`.
+
 ## Not covered
 
 - Multi-GPU serving (tensor/pipeline parallelism), LoRA adapters, speculative
