@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -322,3 +324,49 @@ def test_pick_instance_returns_the_only_running_one() -> None:
     assert (
         aws_gpu.pick_instance(make_fake_aws(instances=[instance("i-1")]), None) == "i-1"
     )
+
+
+class FakeTunnel:
+    """A `aws ssm start-session` process that the user stops with Ctrl-C."""
+
+    def __init__(self, hang_on_exit: bool = False) -> None:
+        self.waits = 0
+        self.terminated = False
+        self.hang_on_exit = hang_on_exit
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.waits += 1
+        if self.waits == 1:
+            raise KeyboardInterrupt  # the user pressed Ctrl-C
+        if self.hang_on_exit and not self.terminated:
+            raise subprocess.TimeoutExpired("aws", timeout or 0)
+        return 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+@pytest.mark.parametrize("hang", [False, True])
+def test_forward_ctrl_c_closes_the_tunnel_quietly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], hang: bool
+) -> None:
+    tunnel = FakeTunnel(hang_on_exit=hang)
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd: tunnel)
+    code = aws_gpu.cmd_forward(
+        make_fake_aws(), Config(), ns(instance="i-1", local_port=8000), {}
+    )
+    assert code == 0  # not 130: stopping the tunnel is not a failure
+    assert "Tunnel closed" in capsys.readouterr().out
+    assert tunnel.terminated is hang  # only forced when the CLI does not exit
+
+
+def test_forward_returns_the_tunnel_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def wait(self, timeout: float | None = None) -> int:
+            return 254
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd: Failing())
+    args = ns(instance="i-1", local_port=8000)
+    assert aws_gpu.cmd_forward(make_fake_aws(), Config(), args, {}) == 254

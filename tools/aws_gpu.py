@@ -650,7 +650,20 @@ def cmd_forward(
     print(
         f"Tunnelling localhost:{args.local_port} -> {instance_id}:{PORT} (Ctrl-C stops)"
     )
-    return subprocess.call(cmd)
+    proc = subprocess.Popen(cmd)
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        # Ctrl-C goes to the whole foreground process group, so the AWS CLI is
+        # already closing its session. Let it finish instead of dumping a
+        # traceback; stopping the tunnel this way is normal use, not an error.
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            proc.wait(timeout=5)
+        print("\nTunnel closed.")
+        return 0
 
 
 # --- down / purge ----------------------------------------------------------
