@@ -28,6 +28,14 @@ when they write "just run this on a GPU" repos, and it is what makes this
 something you can hand to a stranger without worrying they will leave a
 hundred-dollar instance running.
 
+```mermaid
+flowchart LR
+    Lessons["Lessons<br/>plain HTTP scripts"] --> URL["VLLM_BASE_URL"]
+    URL --> Mock["Mock server<br/>offline, no GPU, CI"]
+    URL --> AWS["vLLM on AWS<br/>aws_gpu.py launcher"]
+    URL -.-> Future["Any vLLM<br/>future: Triton, diffusers, …"]
+```
+
 ## Setup
 
 ```bash
@@ -129,7 +137,7 @@ instance remains. Generated local files: none besides `.env`. If something goes
 wrong, look for instances, volumes and security groups tagged `Project=vllm-primer`.
 
 Why `--dtype half`: the T4 predates bfloat16, and Qwen2.5 checkpoints default to
-it. Larger GPUs (`VLLM_INSTANCE_TYPE=g5.xlarge`, A10G; `g6.xlarge`, L4) can take
+it. Larger GPUs (`VLLM_INSTANT_TYPE=g5.xlarge`, A10G; `g6.xlarge`, L4) can take
 `VLLM_SERVER_ARGS=--dtype bfloat16`.
 
 ### Least-privilege access with IAM Identity Center
@@ -168,7 +176,7 @@ after 20 minutes (Session Manager default; adjustable up to 60).
 an inline policy on it (that is how the token is read), which could be abused to hand
 that role more power. To close it, have an administrator create the role and its
 instance profile once (same name, with `AmazonSSMManagedInstanceCore`, plus read
-access to `/vllm-primer/hf-token` if you use a token), set `VLLM_INSTANCE_PROFILE`,
+access to `/vllm-primer/hf-token` if you use a token), set `VLLM_INSTANT_PROFILE`,
 and remove the `ManageOnlyTheOneRoleAndProfile` and `AttachOnlyTheSsmManagedPolicy`
 statements from the permission set. Keep `PassOnlyTheSsmRoleToEc2`.
 
