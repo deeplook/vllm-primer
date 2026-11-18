@@ -11,6 +11,23 @@ That server can be a **mock** (offline, no GPU, used by CI), **vLLM on an AWS GP
 instance** that `tools/aws_gpu.py` launches for you, or any vLLM you already run.
 Lessons skip cleanly when nothing answers.
 
+## Why this exists
+
+The value here isn't the vLLM content itself — it's the scaffolding around it.
+The lessons, the mock server, and the disposable cloud infrastructure are fully
+decoupled from whichever inference engine sits underneath. Swap vLLM for Triton
+tomorrow and most of the repo survives unchanged. Most tutorials hard-wire the
+tool into the teaching, so the moment the tool evolves or you want a second
+engine, you start over. This one is a template for teaching any serving stack,
+not just a single product.
+
+The other half is the safety design: SSM-only access with no inbound ports or
+SSH keys, an instance that terminates itself after a set number of hours, and
+optional Spot instances with self-healing relaunch. That is the part people skip
+when they write "just run this on a GPU" repos, and it is what makes this
+something you can hand to a stranger without worrying they will leave a
+hundred-dollar instance running.
+
 ## Setup
 
 ```bash
