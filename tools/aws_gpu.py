@@ -7,7 +7,7 @@ carrying that tag. The instance has no inbound network access: you reach it
 through an SSM Session Manager tunnel (`forward`), and it terminates itself
 after VLLM_AUTO_TERMINATE_HOURS.
 
-Commands: plan, up, status, wait, logs, forward, down, purge.
+Commands: plan, policy, up, status, wait, logs, forward, down, purge.
 Run `aws_gpu.py -h` or `aws_gpu.py <command> -h` for details.
 """
 
@@ -35,6 +35,7 @@ SG_NAME = "vllm-primer"
 HF_PARAM = "/vllm-primer/hf-token"
 PORT = 8000
 SSM_POLICY_ARN = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+POLICY_FILE = Path(__file__).with_name("aws_gpu_policy.json")
 AMI_PARAM = (
     "/aws/service/deeplearning/ami/x86_64/"
     "base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id"
@@ -776,6 +777,16 @@ def cmd_plan(
     return 1 if plan.problems else 0
 
 
+def cmd_policy(
+    aws: Aws, cfg: Config, args: argparse.Namespace, env: Mapping[str, str]
+) -> int:
+    account = aws.sts.get_caller_identity()["Account"]
+    text = POLICY_FILE.read_text()
+    text = text.replace("<ACCOUNT_ID>", account).replace("<REGION>", aws.region)
+    print(json.dumps(json.loads(text), indent=2))
+    return 0
+
+
 # --- CLI -------------------------------------------------------------------
 
 
@@ -787,6 +798,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan", help="check access, quota and price; create nothing")
+    sub.add_parser(
+        "policy", help="print the least-privilege IAM policy for this account/region"
+    )
     up = sub.add_parser("up", help="launch the instance (needs --yes)")
     up.add_argument("--yes", action="store_true", help="really create resources")
     status = sub.add_parser("status", help="list instances, uptime and cost so far")
@@ -817,6 +831,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 HANDLERS = {
     "plan": cmd_plan,
+    "policy": cmd_policy,
     "up": cmd_up,
     "status": cmd_status,
     "wait": cmd_wait,

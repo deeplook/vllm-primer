@@ -6,7 +6,7 @@ AWS_GPU := uv run python tools/aws_gpu.py
 LESSONS := $(sort $(wildcard examples/[0-9]*.py))
 
 .PHONY: help install run format lint typecheck test check-all mock hooks \
-        live-plan live-up live-status live-wait live-logs live-forward live-run \
+        live-policy live-plan live-up live-status live-wait live-logs live-forward live-run \
         clean-remote clean-remote-all
 
 help: ## Show this help
@@ -39,6 +39,9 @@ mock: ## Start the fake vLLM server for offline lessons (PORT=8000)
 
 hooks: ## Install the git pre-commit hook (needs uv)
 	uvx pre-commit install
+
+live-policy: ## AWS: print the least-privilege IAM policy for this account/region
+	$(AWS_GPU) policy
 
 live-plan: ## AWS: check access, quota and price; creates nothing
 	$(AWS_GPU) plan

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -370,3 +372,124 @@ def test_forward_returns_the_tunnel_exit_code(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(subprocess, "Popen", lambda cmd: Failing())
     args = ns(instance="i-1", local_port=8000)
     assert aws_gpu.cmd_forward(make_fake_aws(), Config(), args, {}) == 254
+
+
+POLICY = json.loads(
+    (Path(aws_gpu.__file__).with_name("aws_gpu_policy.json")).read_text()
+)
+# IAM prefixes for the boto3 client attributes used in aws_gpu.py.
+IAM_PREFIX = {
+    "ec2": "ec2",
+    "ssm": "ssm",
+    "iam": "iam",
+    "quotas": "servicequotas",
+    "pricing": "pricing",
+}
+# Permissions the tool needs without calling them by name: tagging on create,
+# PassRole for run_instances, the `aws ssm start-session` subprocess, and the
+# one-time Spot service-linked role.
+IMPLICIT = {
+    "ec2:CreateTags",
+    "iam:PassRole",
+    "iam:TagRole",
+    "iam:TagInstanceProfile",
+    "iam:CreateServiceLinkedRole",
+    "ssm:StartSession",
+    "ssm:TerminateSession",
+    "ssm:ResumeSession",
+}
+
+
+def policy_actions() -> set[str]:
+    actions: set[str] = set()
+    for stmt in POLICY["Statement"]:
+        raw = stmt["Action"]
+        actions.update([raw] if isinstance(raw, str) else raw)
+    return actions
+
+
+def camel(snake: str) -> str:
+    return "".join(part.capitalize() for part in snake.split("_"))
+
+
+def test_policy_covers_every_aws_call_the_tool_makes() -> None:
+    source = Path(aws_gpu.__file__).read_text()
+    called = {
+        f"{IAM_PREFIX[svc]}:{camel(method)}"
+        for svc, method in re.findall(
+            r"aws\.(ec2|ssm|iam|quotas|pricing)\.([a-z_]+)\(", source
+        )
+    }
+    assert len(called) > 25  # the regex really found the calls
+    missing = (called | IMPLICIT) - policy_actions()
+    assert not missing, f"add to tools/aws_gpu_policy.json: {sorted(missing)}"
+
+
+def test_policy_grants_nothing_the_tool_does_not_use() -> None:
+    source = Path(aws_gpu.__file__).read_text()
+    called = {
+        f"{IAM_PREFIX[svc]}:{camel(method)}"
+        for svc, method in re.findall(
+            r"aws\.(ec2|ssm|iam|quotas|pricing)\.([a-z_]+)\(", source
+        )
+    }
+    extra = policy_actions() - called - IMPLICIT
+    assert not extra, f"policy grants unused actions: {sorted(extra)}"
+
+
+def test_policy_has_no_wildcard_actions_and_no_unscoped_iam_writes() -> None:
+    for stmt in POLICY["Statement"]:
+        actions = (
+            [stmt["Action"]] if isinstance(stmt["Action"], str) else stmt["Action"]
+        )
+        assert all("*" not in a for a in actions), stmt["Sid"]
+        resources = (
+            [stmt["Resource"]]
+            if isinstance(stmt["Resource"], str)
+            else stmt["Resource"]
+        )
+        if any(a.startswith("iam:") for a in actions):
+            assert "*" not in resources, f"{stmt['Sid']} must name its IAM resources"
+            assert all(
+                "vllm-primer" in r or "AWSServiceRoleForEC2Spot" in r for r in resources
+            )
+
+
+def test_policy_tag_conditions_never_sit_on_untagged_resources() -> None:
+    """A tag condition on a statement that also lists a document denies the document."""
+    for stmt in POLICY["Statement"]:
+        keys = {k for cond in stmt.get("Condition", {}).values() for k in cond}
+        if any("resourceTag" in k for k in keys):
+            resources = (
+                [stmt["Resource"]]
+                if isinstance(stmt["Resource"], str)
+                else stmt["Resource"]
+            )
+            assert all(
+                ":instance/" in r or ":security-group/" in r for r in resources
+            ), stmt["Sid"]
+
+
+def test_launch_is_limited_to_small_gpu_types_and_tagged_requests() -> None:
+    (stmt,) = [
+        s
+        for s in POLICY["Statement"]
+        if s["Sid"] == "LaunchOnlyTaggedSmallGpuInstances"
+    ]
+    assert stmt["Condition"]["StringEquals"]["aws:RequestTag/Project"] == "vllm-primer"
+    assert "g4dn.xlarge" in stmt["Condition"]["StringLike"]["ec2:InstanceType"]
+    assert not any(
+        t.startswith(("p", "g6e", "g5.4"))
+        for t in stmt["Condition"]["StringLike"]["ec2:InstanceType"]
+    )
+
+
+def test_policy_command_fills_in_account_and_region(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    aws = make_fake_aws()
+    assert aws_gpu.cmd_policy(aws, Config(), ns(), {}) == 0
+    out = capsys.readouterr().out
+    assert "<ACCOUNT_ID>" not in out and "<REGION>" not in out
+    assert "arn:aws:iam::1:role/vllm-primer-ssm" in out and "eu-central-1" in out
+    json.loads(out)

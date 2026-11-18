@@ -96,8 +96,9 @@ On-Demand G and VT instances") if it is too low. `g4dn.xlarge` needs 4 vCPUs.
 through SSM Session Manager, so there are no open ports, SSH keys or API keys to
 manage. IMDSv2 is required. A Hugging Face token, if you use one, is stored as an
 encrypted SSM parameter and read by the instance; it is never in user data.
-Prefer an IAM user or SSO role over the account's root user: `plan` warns if you
-are on root.
+Prefer an SSO role over the account's root user: `plan` warns if you are on root.
+See [Least-privilege access with IAM Identity Center](#least-privilege-access-with-iam-identity-center)
+for the setup and a ready-made policy.
 
 **Permissions** the calling identity needs: EC2 (describe, run/terminate
 instances, create/delete a security group), IAM (create/delete the
@@ -113,6 +114,46 @@ wrong, look for instances, volumes and security groups tagged `Project=vllm-prim
 Why `--dtype half`: the T4 predates bfloat16, and Qwen2.5 checkpoints default to
 it. Larger GPUs (`VLLM_INSTANCE_TYPE=g5.xlarge`, A10G; `g6.xlarge`, L4) can take
 `VLLM_SERVER_ARGS=--dtype bfloat16`.
+
+### Least-privilege access with IAM Identity Center
+
+Instead of the root user, give `aws_gpu.py` its own short-lived login. Identity
+Center issues credentials that expire, so there are no long-lived access keys.
+
+1. In the AWS console enable **IAM Identity Center** and create a user for yourself.
+2. Create a **permission set** (say `VllmPrimerOperator`). As its inline policy paste
+   the output of `make live-policy`; it is `tools/aws_gpu_policy.json` filled in for
+   your account and region. Set the session duration (1-12 hours; 4 fits the
+   instance's default lifetime).
+3. Assign your user and that permission set to the account.
+4. Create the profile and sign in; both write only to `~/.aws`:
+
+   ```bash
+   aws configure sso            # name the profile e.g. vllm-primer
+   aws sso login --profile vllm-primer
+   ```
+5. Put `AWS_PROFILE=vllm-primer` in `.env`. Nothing else changes.
+
+The policy allows only what the tool calls, in one region, on resources tagged
+`Project=vllm-primer`; launches are limited to `g4dn.xlarge`, `g5.xlarge` and
+`g6.xlarge`. A test fails if the tool starts calling anything the policy lacks, or
+if the policy grants anything the tool does not use, and AWS's policy validator
+reports no findings.
+
+**Sessions**: the access-portal session (your `aws sso login`) lasts 8 hours by
+default, configurable from 15 minutes to 90 days, and the CLI refreshes the role
+credentials for as long as it is valid. The instance does not depend on your
+credentials once launched (it terminates itself), but `down` needs a valid login:
+run `aws sso login` again if it has expired. An idle `live-forward` tunnel closes
+after 20 minutes (Session Manager default; adjustable up to 60).
+
+**Residual risk**: the operator can create the one role `vllm-primer-ssm` and write
+an inline policy on it (that is how the token is read), which could be abused to hand
+that role more power. To close it, have an administrator create the role and its
+instance profile once (same name, with `AmazonSSMManagedInstanceCore`, plus read
+access to `/vllm-primer/hf-token` if you use a token), set `VLLM_INSTANCE_PROFILE`,
+and remove the `ManageOnlyTheOneRoleAndProfile` and `AttachOnlyTheSsmManagedPolicy`
+statements from the permission set. Keep `PassOnlyTheSsmRoleToEc2`.
 
 ## Testing
 

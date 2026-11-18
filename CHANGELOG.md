@@ -18,6 +18,11 @@
 - Makefile with `check-all` (lint, strict mypy, tests), `live-*` and
   `clean-remote*` targets, CI on the locked environment, optional pre-commit hook.
 
+- `tools/aws_gpu_policy.json` and `make live-policy`: a least-privilege IAM policy
+  for IAM Identity Center (tag- and region-scoped, small GPU types only), with
+  tests that tie it to the calls the tool makes, and a README section on setting
+  it up instead of using the root user.
+
 ### Verified
 - 2026-11-18: all ten lessons ran against real vLLM v0.33.0 serving
   Qwen2.5-0.5B-Instruct on a `g4dn.xlarge` (T4) in `eu-central-1`, through the
