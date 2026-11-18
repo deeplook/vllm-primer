@@ -1,5 +1,9 @@
 # vLLM Primer
 
+[![CI](https://github.com/deeplook/vllm-primer/actions/workflows/ci.yml/badge.svg)](https://github.com/deeplook/vllm-primer/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/deeplook/vllm-primer?logo=github)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/deeplook)
+
 Small executable lessons for serving LLMs with [vLLM](https://github.com/vllm-project/vllm):
 the OpenAI-compatible server, streaming, sampling, structured output, tool
 calling, continuous batching, prefix caching and metrics. It is the GPU sibling
