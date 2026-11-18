@@ -552,10 +552,15 @@ def pick_instance(aws: Aws, explicit: str | None) -> str:
     if explicit:
         return explicit
     running = find_instances(aws, ["pending", "running"])
-    if len(running) != 1:
+    if not running:
         raise ToolError(
-            f"Found {len(running)} running vllm-primer instances; pass an instance id."
+            f"No running vllm-primer instance in {aws.region}. Did the launch run? "
+            "`make live-up` only prints the plan; use `make live-up YES=1` to "
+            "launch, or check `make live-status`."
         )
+    if len(running) > 1:
+        ids = ", ".join(i["InstanceId"] for i in running)
+        raise ToolError(f"Several instances are running ({ids}); pass an instance id.")
     return str(running[0]["InstanceId"])
 
 

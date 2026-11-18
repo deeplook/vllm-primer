@@ -304,3 +304,21 @@ def test_spot_plan_blocks_on_the_spot_quota_not_the_on_demand_one() -> None:
     assert aws_gpu.make_plan(aws, Config(use_spot=False)).problems == []
     problems = aws_gpu.make_plan(aws, Config(use_spot=True)).problems
     assert any("Spot" in p for p in problems)
+
+
+def test_pick_instance_explains_how_to_launch_when_none_is_running() -> None:
+    with pytest.raises(ToolError, match=r"make live-up YES=1"):
+        aws_gpu.pick_instance(make_fake_aws(), None)
+
+
+def test_pick_instance_refuses_to_guess_between_several() -> None:
+    aws = make_fake_aws(instances=[instance("i-1"), instance("i-2")])
+    with pytest.raises(ToolError, match="i-1, i-2"):
+        aws_gpu.pick_instance(aws, None)
+    assert aws_gpu.pick_instance(aws, "i-2") == "i-2"
+
+
+def test_pick_instance_returns_the_only_running_one() -> None:
+    assert (
+        aws_gpu.pick_instance(make_fake_aws(instances=[instance("i-1")]), None) == "i-1"
+    )

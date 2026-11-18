@@ -74,6 +74,8 @@ make live-run               # in another terminal: all lessons, for real
 VLLM_PRIMER_CONFIRM=terminate make clean-remote INSTANCE=i-0123456789abcdef0
 ```
 
+Last verified end to end: vLLM v0.33.0 on `g4dn.xlarge` (T4), `eu-central-1`, 2026-11-18.
+
 **What it creates**: one `g4dn.xlarge` (NVIDIA T4, 16 GB, 4 vCPU), the smallest
 single GPU vLLM supports (compute capability 7.5+), running the pinned
 `vllm/vllm-openai` image on the AWS Deep Learning AMI with a 100 GB encrypted
